@@ -11,6 +11,11 @@ app = Flask(__name__)
 def health_check():
     return jsonify({"status": "healthy", "message": "FPL API is running!"})
 
+# Test endpoint
+@app.route('/test')
+def test():
+    return jsonify({"message": "API is working!", "test": "success"})
+
 # Normalize name for matching
 def normalize(text):
     text = unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode("utf-8")
@@ -25,11 +30,16 @@ fdr_labels = {
     5: "Likely To Lose"
 }
 
-# Load all FPL data
+# Load all FPL data with timeout and error handling
 def load_fpl_data():
-    static = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/").json()
-    fixtures = requests.get("https://fantasy.premierleague.com/api/fixtures/").json()
-    return static['elements'], static['teams'], fixtures
+    try:
+        # Add timeout to prevent hanging
+        static = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
+        fixtures = requests.get("https://fantasy.premierleague.com/api/fixtures/", timeout=10).json()
+        return static['elements'], static['teams'], fixtures
+    except Exception as e:
+        print(f"Error loading FPL data: {e}")
+        return [], [], []
 
 # Match player
 def match_player(name, players):
@@ -84,39 +94,46 @@ def summarize_difficulty(fixtures):
 # Main endpoint
 @app.route('/compare', methods=['GET'])
 def compare_players():
-    query = request.args.get('players')
-    if not query:
-        return jsonify({"error": "Missing 'players' parameter"}), 400
+    try:
+        query = request.args.get('players')
+        if not query:
+            return jsonify({"error": "Missing 'players' parameter"}), 400
 
-    names = [n.strip() for n in query.split(",")]
-    players, teams, fixtures = load_fpl_data()
+        names = [n.strip() for n in query.split(",")]
+        players, teams, fixtures = load_fpl_data()
+        
+        if not players:
+            return jsonify({"error": "Unable to load FPL data. Please try again later."}), 500
 
-    results = []
-    for name in names:
-        player, suggestion = match_player(name, players)
-        if player:
-            team_name = get_team_name(player['team'], teams)
-            next_games = get_next_fixtures(player['team'], fixtures, teams)
-            summary = summarize_difficulty(next_games)
+        results = []
+        for name in names:
+            player, suggestion = match_player(name, players)
+            if player:
+                team_name = get_team_name(player['team'], teams)
+                next_games = get_next_fixtures(player['team'], fixtures, teams)
+                summary = summarize_difficulty(next_games)
 
-            results.append({
-                "player": f"{player['first_name']} {player['second_name']}",
-                "team": team_name,
-                "price": player['now_cost'] / 10,
-                "ppg": float(player['points_per_game']),
-                "status": player['status'],
-                "fixtures": next_games,
-                "summary": summary
-            })
-        else:
-            msg = {
-                "error": f"No match for '{name}'"
-            }
-            if suggestion:
-                msg["suggestion"] = suggestion
-            results.append(msg)
+                results.append({
+                    "player": f"{player['first_name']} {player['second_name']}",
+                    "team": team_name,
+                    "price": player['now_cost'] / 10,
+                    "ppg": float(player['points_per_game']),
+                    "status": player['status'],
+                    "fixtures": next_games,
+                    "summary": summary
+                })
+            else:
+                msg = {
+                    "error": f"No match for '{name}'"
+                }
+                if suggestion:
+                    msg["suggestion"] = suggestion
+                results.append(msg)
 
-    return jsonify(results)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False) 
