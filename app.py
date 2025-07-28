@@ -2,8 +2,14 @@ from flask import Flask, request, jsonify
 import requests
 import unicodedata
 from difflib import get_close_matches
+import os
 
 app = Flask(__name__)
+
+# Health check endpoint
+@app.route('/')
+def health_check():
+    return jsonify({"status": "healthy", "message": "FPL API is running!"})
 
 # Normalize name for matching
 def normalize(text):
